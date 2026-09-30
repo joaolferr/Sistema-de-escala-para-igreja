@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Líder do Ministério</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="shell">
+      <aside>
+        <div class="profile">
+          <div class="avatar" id="avt"></div>
+          <div><strong id="nm"></strong><span>Líder do ministério</span></div>
+        </div>
+        <nav id="nav"></nav>
+        <button class="logout" onclick="logout()">Sair</button>
+      </aside>
+      <main id="main"></main>
+    </div>
+    <script src="app.js"></script>
+    <script>
+      let user;
+      const fbp = import("./firebase.js");
+
+      const NAV = [
+        ["inicio", "Início"],
+        ["escalas", "Escalas"],
+        ["pessoas", "Pessoas"],
+        [
+          "trocas",
+          "Trocas",
+          () => trocas.filter((t) => t.status === "pendente").length,
+        ],
+      ];
+      function renderNav(active) {
+        document.getElementById("nav").innerHTML = NAV.map(
+          ([key, label, count]) =>
+            `<a href="#" class="${key === active ? "active" : ""}" onclick="goTo('${key}');return false;">
+      <span>${label}</span>${count && count() ? `<span class="count">${count()}</span>` : ""}</a>`,
+        ).join("");
+      }
+      function goTo(view) {
+        renderNav(view);
+        ({
+          inicio: renderInicio,
+          escalas: renderEscalas,
+          pessoas: renderPessoas,
+          trocas: renderTrocas,
+        })[view]();
+      }
+
+      function agruparPorDia(lista) {
+        const porData = {};
+        lista.forEach((e) => {
+          if (!porData[e.data])
+            porData[e.data] = { data: e.data, evento: e.evento, itens: [] };
+          porData[e.data].itens.push({
+            pessoaId: e.pessoaId,
+            ministerio: e.ministerio,
+          });
+        });
+        return Object.values(porData).sort((a, b) =>
+          a.data.localeCompare(b.data),
+        );
+      }
+      function diaCard(dia) {
+        const ministeriosDia = [...new Set(dia.itens.map((i) => i.ministerio))];
+        return `<div class="escala-card">
+    <div class="top"><span class="quando">${diasLabel(dia.data)}</span><span>${fmtData(dia.data)}</span></div>
+    <h4>${dia.evento}</h4>
+    <div class="pessoa-lista">${dia.itens.map((i) => `<div class="pessoa-linha">${avatarHtml(nomePessoa(i.pessoaId))}<div><strong>${nomePessoa(i.pessoaId)}</strong><span class="em">${i.ministerio}</span></div></div>`).join("")}</div>
+    <div class="stats"><span>👥 ${dia.itens.length}</span><span>${ministeriosDia.join(" · ")}</span></div>
+  </div>`;
+      }
+
+      function renderInicio() {
+        const dias = agruparPorDia(escalas);
+        document.getElementById("main").innerHTML = `
+    <header><div><h2>Início</h2><p>Visão geral do ministério</p></div></header>
+    <div class="section"><div class="section-head"><h3>Avisos</h3><span class="count">0</span></div>
+      <div class="card"><div class="empty">Lista vazia</div></div></div>
+    <div class="section"><div class="section-head"><h3>Próximas escalas</h3><span class="count">${dias.length}</span>
+      <a class="see-all" href="#" onclick="goTo('escalas');return false;">Ver todas</a></div>
+      <div class="card-row">${dias.slice(0, 3).map(diaCard).join("")}</div></div>`;
+      }
+
+      function renderEscalas() {
+        document.getElementById("main").innerHTML = `
+    <header><div><h2>Escalas</h2><p>Quem serve, onde e quando</p></div>
+    <button class="btn" onclick="abrirModalEscala()">+ Nova escala</button></header>
+    <div class="card"><table><tr><th>Data</th><th>Evento</th><th>Ministério</th><th>Pessoa</th><th></th></tr>
+    ${escalas
+      .map(
+        (
+          e,
+        ) => `<tr><td>${e.data}</td><td>${e.evento}</td><td><span class="tag">${e.ministerio}</span></td>
+      <td>${nomePessoa(e.pessoaId)}</td><td><button class="btn danger small" onclick="removerEscala(${e.id})">Remover</button></td></tr>`,
+      )
+      .join("")}
+    </table></div>`;
+      }
+      function abrirModalEscala() {
+        document.body.insertAdjacentHTML(
+          "beforeend",
+          `
+    <div class="modal-bg" id="modalEscala"><div class="modal"><h3>Nova escala</h3>
+      <div class="field"><label>Evento</label><input id="mEvento" placeholder="Culto de Celebração"></div>
+      <div class="field"><label>Data</label><input id="mData" type="date"></div>
+      <div class="field"><label>Ministério</label><select id="mMinisterio">${ministerios.map((m) => `<option>${m}</option>`).join("")}</select></div>
+      <div class="field"><label>Pessoa</label><select id="mPessoa">${pessoas.map((p) => `<option value="${p.id}">${p.nome}</option>`).join("")}</select></div>
+      <div class="modal-actions">
+        <button class="btn ghost" onclick="document.getElementById('modalEscala').remove()">Cancelar</button>
+        <button class="btn" onclick="salvarEscala()">Salvar e notificar</button>
+      </div></div></div>`,
+        );
+      }
+      function salvarEscala() {
+        escalas.push({
+          id: ++uid,
+          pessoaId: +document.getElementById("mPessoa").value,
+          ministerio: document.getElementById("mMinisterio").value,
+          data: document.getElementById("mData").value,
+          evento: document.getElementById("mEvento").value || "Culto",
+        });
+        document.getElementById("modalEscala").remove();
+        renderEscalas();
+      }
+      function removerEscala(id) {
+        escalas = escalas.filter((e) => e.id !== id);
+        renderEscalas();
+      }
+
+      async function renderPessoas() {
+        const fb = await fbp;
+        document.getElementById("main").innerHTML = `
+    <header><div><h2>Pessoas</h2><p>Voluntários e os ministérios que integram</p></div>
+    <button class="btn" onclick="abrirModalPessoa()">+ Nova pessoa</button></header>
+    <div class="card"><div class="empty">Carregando...</div></div>`;
+        const snap = await fb.getDocs(
+          fb.query(
+            fb.collection(fb.db, "usuarios"),
+            fb.where("perfil", "==", "voluntario"),
+          ),
+        );
+        const lista = snap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => a.nome.localeCompare(b.nome));
+        document.querySelector("#main .card").innerHTML = lista.length
+          ? `<table><tr><th>Nome</th><th>E-mail</th><th>Ministérios</th><th></th></tr>
+      ${lista
+        .map(
+          (p) => `<tr><td>${p.nome}</td><td>${p.email || "—"}</td>
+        <td>${(p.ministerios || []).map((m) => `<span class="tag">${m}</span>`).join(" ")}</td>
+        <td><button class="btn danger small" onclick="removerPessoa('${p.id}')">Remover</button></td></tr>`,
+        )
+        .join("")}</table>`
+          : `<div class="empty">Nenhum voluntário cadastrado ainda</div>`;
+      }
+      function abrirModalPessoa() {
+        document.body.insertAdjacentHTML(
+          "beforeend",
+          `
+    <div class="modal-bg" id="modalPessoa"><div class="modal"><h3>Nova pessoa</h3>
+      <div class="field"><label>Nome</label><input id="pNome"></div>
+      <div class="field"><label>E-mail</label><input id="pEmail" type="email"></div>
+      <div class="field"><label>Ministérios</label>
+        ${ministerios.map((m) => `<label style="display:block;font-size:14px;color:var(--text)"><input type="checkbox" name="pMin" value="${m}"> ${m}</label>`).join("")}</div>
+      <p style="font-size:12px">A pessoa recebe um e-mail para criar a própria senha.</p>
+      <div class="modal-actions">
+        <button class="btn ghost" onclick="document.getElementById('modalPessoa').remove()">Cancelar</button>
+        <button class="btn" id="pSalvar" onclick="salvarPessoa()">Cadastrar</button>
+      </div></div></div>`,
+        );
+      }
+      async function salvarPessoa() {
+        const nome = document.getElementById("pNome").value.trim();
+        const email = document.getElementById("pEmail").value.trim();
+        const mins = [
+          ...document.querySelectorAll("input[name=pMin]:checked"),
+        ].map((i) => i.value);
+        if (!nome || !email) {
+          alert("Preencha nome e e-mail.");
+          return;
+        }
+        const btn = document.getElementById("pSalvar");
+        btn.disabled = true;
+        btn.textContent = "Cadastrando...";
+        try {
+          const fb = await fbp;
+          const uid = await fb.criarConta(email);
+          await fb.setDoc(fb.doc(fb.db, "usuarios", uid), {
+            nome,
+            email,
+            perfil: "voluntario",
+            ministerios: mins,
+          });
+          document.getElementById("modalPessoa").remove();
+          renderPessoas();
+          alert(
+            "Cadastrado. Um e-mail foi enviado para " +
+              email +
+              " para definir a senha.",
+          );
+        } catch (err) {
+          alert(
+            err.code === "auth/email-already-in-use"
+              ? "Este e-mail já está cadastrado."
+              : "Não foi possível cadastrar: " + (err.code || err.message),
+          );
+          btn.disabled = false;
+          btn.textContent = "Cadastrar";
+        }
+      }
+      async function removerPessoa(id) {
+        if (!confirm("Remover esta pessoa? Ela perde o acesso ao sistema."))
+          return;
+        const fb = await fbp;
+        await fb.deleteDoc(fb.doc(fb.db, "usuarios", id));
+        renderPessoas();
+      }
+
+      function renderTrocas() {
+        document.getElementById("main").innerHTML = `
+    <header><div><h2>Trocas</h2><p>Solicitações de voluntários para aprovar</p></div></header>
+    <div class="card">${
+      trocas.length
+        ? `<table><tr><th>Escala</th><th>Solicitante</th><th>Motivo</th><th>Status</th><th></th></tr>
+    ${trocas
+      .map((t) => {
+        const esc = escalas.find((e) => e.id === t.escalaId);
+        return `<tr><td>${esc?.evento} — ${esc?.data}</td><td>${nomePessoa(t.solicitanteId)}</td>
+      <td>${t.motivo || "—"}</td>
+      <td><span class="tag pending">${t.status}</span></td>
+      <td>${t.status === "pendente" ? `<button class="btn small" onclick="aprovarTroca(${t.id})">Aprovar</button>` : ""}</td></tr>`;
+      })
+      .join("")}
+    </table>`
+        : `<div class="empty">Nenhum pedido de troca</div>`
+    }</div>`;
+      }
+      function aprovarTroca(id) {
+        trocas = trocas.map((t) =>
+          t.id === id ? { ...t, status: "aprovado" } : t,
+        );
+        renderTrocas();
+        renderNav("trocas");
+      }
+
+      requireSession("lider", (u) => {
+        user = u;
+        document.getElementById("nm").textContent = user.nome;
+        document.getElementById("avt").textContent = iniciais(user.nome);
+        renderNav("inicio");
+        renderInicio();
+      });
+    </script>
+  </body>
+</html>

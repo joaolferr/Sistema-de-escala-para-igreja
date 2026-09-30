@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Minha área</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="shell">
+      <aside>
+        <div class="profile">
+          <div class="avatar" id="avt"></div>
+          <div><strong id="nm"></strong><span>Voluntário</span></div>
+        </div>
+        <nav id="nav"></nav>
+        <button class="logout" onclick="logout()">Sair</button>
+      </aside>
+      <main id="main"></main>
+    </div>
+    <script src="app.js"></script>
+    <script>
+      let user;
+
+      const NAV = [
+        ["inicio", "Início"],
+        ["disponibilidade", "Indisponibilidade"],
+      ];
+      function renderNav(active) {
+        document.getElementById("nav").innerHTML = NAV.map(
+          ([key, label]) =>
+            `<a href="#" class="${key === active ? "active" : ""}" onclick="goTo('${key}');return false;">${label}</a>`,
+        ).join("");
+      }
+      function goTo(view) {
+        renderNav(view);
+        ({ inicio: renderInicio, disponibilidade: renderDisponibilidade })[
+          view
+        ]();
+      }
+
+      function minhasEscalas() {
+        return escalas.filter((e) => e.pessoaId === user.pessoaId);
+      }
+
+      function escalaCard(e) {
+        return `<div class="escala-card">
+    <div class="top"><span class="quando">${diasLabel(e.data)}</span><span>${fmtData(e.data)}</span></div>
+    <h4>${e.evento}</h4><div class="em">${e.ministerio}</div>
+    <div class="stats"><span>Você está escalado</span></div>
+    <div style="margin-top:10px"><button class="btn ghost small" onclick="abrirModalTroca(${e.id})">Pedir troca</button></div>
+  </div>`;
+      }
+
+      function abrirModalTroca(escalaId) {
+        document.body.insertAdjacentHTML(
+          "beforeend",
+          `
+    <div class="modal-bg" id="modalTroca"><div class="modal"><h3>Pedir troca</h3>
+      <div class="field"><label>Motivo</label>
+        <textarea id="tMotivo" rows="3" style="width:100%;resize:vertical;font-family:inherit;background:#fff;border:1px solid var(--line);border-radius:8px;padding:9px 11px;" placeholder="Explique por que precisa trocar este dia..."></textarea></div>
+      <div class="modal-actions">
+        <button class="btn ghost" onclick="document.getElementById('modalTroca').remove()">Cancelar</button>
+        <button class="btn" onclick="pedirTroca(${escalaId})">Enviar pedido</button>
+      </div></div></div>`,
+        );
+      }
+
+      function renderInicio() {
+        const minhas = minhasEscalas();
+        document.getElementById("main").innerHTML = `
+    <header><div><h2>Início</h2><p>Seus próximos compromissos de serviço</p></div></header>
+    <div class="section"><div class="section-head"><h3>Avisos</h3><span class="count">0</span></div>
+      <div class="card"><div class="empty">Lista vazia</div></div></div>
+    <div class="section"><div class="section-head"><h3>Minhas escalas</h3><span class="count">${minhas.length}</span></div>
+      ${minhas.length ? `<div class="card-row">${minhas.map(escalaCard).join("")}</div>` : `<div class="card"><div class="empty">Nenhuma escala no momento</div></div>`}
+    </div>`;
+      }
+      function pedirTroca(escalaId) {
+        const motivo =
+          document.getElementById("tMotivo").value.trim() || "Não informado";
+        trocas.push({
+          id: ++uid,
+          escalaId,
+          solicitanteId: user.pessoaId,
+          status: "pendente",
+          motivo,
+        });
+        document.getElementById("modalTroca").remove();
+        alert("Pedido de troca enviado ao líder do ministério.");
+      }
+
+      function renderDisponibilidade() {
+        const minhas = indisponibilidades.filter(
+          (i) => i.pessoaId === user.pessoaId,
+        );
+        document.getElementById("main").innerHTML = `
+    <header><div><h2>Indisponibilidade</h2><p>Avise com antecedência os períodos em que não pode servir</p></div>
+    <button class="btn" onclick="abrirModal()">+ Novo período</button></header>
+    <div class="card">${
+      minhas.length
+        ? `<table><tr><th>De</th><th>Até</th><th>Motivo</th></tr>
+    ${minhas.map((i) => `<tr><td>${i.de}</td><td>${i.ate}</td><td>${i.motivo}</td></tr>`).join("")}
+    </table>`
+        : `<div class="empty">Nenhum período registrado</div>`
+    }</div>`;
+      }
+      function abrirModal() {
+        document.body.insertAdjacentHTML(
+          "beforeend",
+          `
+    <div class="modal-bg" id="modalIndisp"><div class="modal"><h3>Novo período</h3>
+      <div class="field"><label>De</label><input id="iDe" type="date"></div>
+      <div class="field"><label>Até</label><input id="iAte" type="date"></div>
+      <div class="field"><label>Motivo</label><input id="iMotivo" placeholder="Viagem, trabalho..."></div>
+      <div class="modal-actions">
+        <button class="btn ghost" onclick="document.getElementById('modalIndisp').remove()">Cancelar</button>
+        <button class="btn" onclick="salvar()">Salvar</button>
+      </div></div></div>`,
+        );
+      }
+      function salvar() {
+        indisponibilidades.push({
+          id: ++uid,
+          pessoaId: user.pessoaId,
+          de: document.getElementById("iDe").value,
+          ate: document.getElementById("iAte").value,
+          motivo: document.getElementById("iMotivo").value || "Não informado",
+        });
+        document.getElementById("modalIndisp").remove();
+        renderDisponibilidade();
+      }
+
+      requireSession("voluntario", (u) => {
+        user = { ...u, pessoaId: 1 }; // pessoaId mock temporário, some quando escalas forem pro Firestore
+        document.getElementById("nm").textContent = user.nome;
+        document.getElementById("avt").textContent = iniciais(user.nome);
+        renderNav("inicio");
+        renderInicio();
+      });
+    </script>
+  </body>
+</html>
