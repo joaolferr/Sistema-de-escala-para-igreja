@@ -86,35 +86,74 @@ function diasLabel(iso) {
 
 // Sessão real via Firebase Auth. O perfil (sistema/lider/voluntario) vem de usuarios/{uid} no Firestore.
 const PAGINA_POR_PERFIL = {
-  sistema: "sistema.html",
+  sistema: "lider.html",
   lider: "lider.html",
   voluntario: "voluntario.html",
 };
 
-function requireSession(perfilEsperado, cb) {
-  import("./firebase.js").then((fb) => {
-    fb.onAuthStateChanged(fb.auth, async (fbUser) => {
-      if (!fbUser) {
-        location.href = "login.html";
-        return;
-      }
-      const snap = await fb.getDoc(fb.doc(fb.db, "usuarios", fbUser.uid));
-      if (!snap.exists()) {
-        await fb.signOut(fb.auth);
-        location.href = "login.html";
-        return;
-      }
-      const user = { uid: fbUser.uid, ...snap.data() };
-      if (user.perfil !== perfilEsperado) {
-        location.href = PAGINA_POR_PERFIL[user.perfil] || "login.html";
-        return;
-      }
-      cb(user);
-    });
-  });
+// perfis Permitidos aceita um perfil só ("voluntario") ou uma lista (['lider','sistema'])
+function mostrarErroSessao(msg) {
+  console.error(msg);
+  const main = document.getElementById("main") || document.body;
+  main.innerHTML = `<div style="padding:24px;color:#C81E1E;font-family:sans-serif">
+    <strong>Não foi possível carregar a página.</strong><br>${msg}<br>
+    <span style="font-size:12px;color:#666">Abra o Console (F12) pra ver o erro técnico completo.</span></div>`;
 }
+
+function requireSession(perfisPermitidos, cb) {
+  const permitidos = Array.isArray(perfisPermitidos)
+    ? perfisPermitidos
+    : [perfisPermitidos];
+  import("./firebase.js")
+    .then((fb) => {
+      fb.onAuthStateChanged(fb.auth, async (fbUser) => {
+        try {
+          if (!fbUser) {
+            location.href = "index.html";
+            return;
+          }
+          const snap = await fb.getDoc(fb.doc(fb.db, "usuarios", fbUser.uid));
+          if (!snap.exists()) {
+            await fb.signOut(fb.auth);
+            location.href = "index.html";
+            return;
+          }
+          const user = { uid: fbUser.uid, ...snap.data() };
+          if (!permitidos.includes(user.perfil)) {
+            location.href = PAGINA_POR_PERFIL[user.perfil] || "index.html";
+            return;
+          }
+          cb(user);
+        } catch (err) {
+          mostrarErroSessao(
+            err.code || err.message || "Erro desconhecido ao carregar sessão.",
+          );
+        }
+      });
+    })
+    .catch((err) =>
+      mostrarErroSessao("Falha ao carregar firebase.js: " + err.message),
+    );
+}
+// Apaga a conta de login + perfil de outra pessoa, via função serverless (/api/removerUsuario).
+// Precisa estar hospedado na Vercel com as variáveis de ambiente configuradas — não funciona no Live Server local.
+async function removerContaCompleta(uid) {
+  const fb = await import("./firebase.js");
+  const token = await fb.auth.currentUser.getIdToken();
+  const res = await fetch("/api/removerUsuario", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer " + token,
+    },
+    body: JSON.stringify({ uid }),
+  });
+  const dados = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(dados.erro || "Não foi possível remover.");
+}
+
 async function logout() {
   const fb = await import("./firebase.js");
   await fb.signOut(fb.auth);
-  location.href = "login.html";
+  location.href = "index.html";
 }

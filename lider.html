@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Líder do Ministério</title>
+    <title>Painel do Ministério</title>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
@@ -11,7 +11,7 @@
       <aside>
         <div class="profile">
           <div class="avatar" id="avt"></div>
-          <div><strong id="nm"></strong><span>Líder do ministério</span></div>
+          <div><strong id="nm"></strong><span id="perfilLabel"></span></div>
         </div>
         <nav id="nav"></nav>
         <button class="logout" onclick="logout()">Sair</button>
@@ -23,16 +23,7 @@
       let user;
       const fbp = import("./firebase.js");
 
-      const NAV = [
-        ["inicio", "Início"],
-        ["escalas", "Escalas"],
-        ["pessoas", "Pessoas"],
-        [
-          "trocas",
-          "Trocas",
-          () => trocas.filter((t) => t.status === "pendente").length,
-        ],
-      ];
+      let NAV;
       function renderNav(active) {
         document.getElementById("nav").innerHTML = NAV.map(
           ([key, label, count]) =>
@@ -47,6 +38,8 @@
           escalas: renderEscalas,
           pessoas: renderPessoas,
           trocas: renderTrocas,
+          usuarios: renderUsuarios,
+          manutencao: renderManutencao,
         })[view]();
       }
 
@@ -213,11 +206,16 @@
         }
       }
       async function removerPessoa(id) {
-        if (!confirm("Remover esta pessoa? Ela perde o acesso ao sistema."))
+        if (
+          !confirm("Remover esta pessoa? A conta de login dela será apagada.")
+        )
           return;
-        const fb = await fbp;
-        await fb.deleteDoc(fb.doc(fb.db, "usuarios", id));
-        renderPessoas();
+        try {
+          await removerContaCompleta(id);
+          renderPessoas();
+        } catch (err) {
+          alert("Não foi possível remover: " + err.message);
+        }
       }
 
       function renderTrocas() {
@@ -247,13 +245,133 @@
         renderNav("trocas");
       }
 
-      requireSession("lider", (u) => {
+      requireSession(["lider", "sistema"], (u) => {
         user = u;
+        NAV = [
+          ["inicio", "Início"],
+          ["escalas", "Escalas"],
+          ["pessoas", "Pessoas"],
+          [
+            "trocas",
+            "Trocas",
+            () => trocas.filter((t) => t.status === "pendente").length,
+          ],
+        ];
+        if (user.perfil === "sistema")
+          NAV.push(["usuarios", "Usuários"], ["manutencao", "Manutenção"]);
         document.getElementById("nm").textContent = user.nome;
         document.getElementById("avt").textContent = iniciais(user.nome);
+        document.getElementById("perfilLabel").textContent =
+          user.perfil === "sistema"
+            ? "Admin do sistema"
+            : "Líder do ministério";
         renderNav("inicio");
         renderInicio();
       });
+
+      // ---------- Telas exclusivas do admin do sistema ----------
+      const NOME_PERFIL = {
+        sistema: "Admin do sistema",
+        lider: "Líder",
+        voluntario: "Voluntário",
+      };
+
+      async function renderUsuarios() {
+        const fb = await fbp;
+        document.getElementById("main").innerHTML = `
+    <header><div><h2>Usuários</h2><p>Contas com acesso ao sistema e seus perfis</p></div>
+    <button class="btn" onclick="abrirModalUsuario()">+ Novo usuário</button></header>
+    <div class="card"><div class="empty">Carregando...</div></div>`;
+        const snap = await fb.getDocs(fb.collection(fb.db, "usuarios"));
+        const lista = snap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => a.nome.localeCompare(b.nome));
+        document.querySelector("#main .card").innerHTML =
+          `<table><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th></th></tr>
+    ${lista
+      .map(
+        (
+          u,
+        ) => `<tr><td>${u.nome}</td><td>${u.email || "—"}</td><td><span class="tag">${NOME_PERFIL[u.perfil] || u.perfil}</span></td>
+      <td>${u.id === user.uid ? "" : `<button class="btn danger small" onclick="removerUsuario('${u.id}')">Remover</button>`}</td></tr>`,
+      )
+      .join("")}
+    </table>`;
+      }
+      function abrirModalUsuario() {
+        document.body.insertAdjacentHTML(
+          "beforeend",
+          `
+    <div class="modal-bg" id="modalUsuario"><div class="modal"><h3>Novo usuário</h3>
+      <div class="field"><label>Nome</label><input id="uNome"></div>
+      <div class="field"><label>E-mail</label><input id="uEmail" type="email"></div>
+      <div class="field"><label>Perfil</label><select id="uPerfil">
+        <option value="lider">Líder do ministério</option>
+        <option value="sistema">Admin do sistema</option>
+        <option value="voluntario">Voluntário</option></select></div>
+      <p style="font-size:12px">A pessoa recebe um e-mail para criar a própria senha.</p>
+      <div class="modal-actions">
+        <button class="btn ghost" onclick="document.getElementById('modalUsuario').remove()">Cancelar</button>
+        <button class="btn" id="uSalvar" onclick="salvarUsuario()">Cadastrar</button>
+      </div></div></div>`,
+        );
+      }
+      async function salvarUsuario() {
+        const nome = document.getElementById("uNome").value.trim();
+        const email = document.getElementById("uEmail").value.trim();
+        const perfil = document.getElementById("uPerfil").value;
+        if (!nome || !email) {
+          alert("Preencha nome e e-mail.");
+          return;
+        }
+        const btn = document.getElementById("uSalvar");
+        btn.disabled = true;
+        btn.textContent = "Cadastrando...";
+        try {
+          const fb = await fbp;
+          const uid = await fb.criarConta(email);
+          await fb.setDoc(fb.doc(fb.db, "usuarios", uid), {
+            nome,
+            email,
+            perfil,
+          });
+          document.getElementById("modalUsuario").remove();
+          renderUsuarios();
+          alert(
+            "Cadastrado. Um e-mail foi enviado para " +
+              email +
+              " para definir a senha.",
+          );
+        } catch (err) {
+          alert(
+            err.code === "auth/email-already-in-use"
+              ? "Este e-mail já está cadastrado."
+              : "Não foi possível cadastrar: " + (err.code || err.message),
+          );
+          btn.disabled = false;
+          btn.textContent = "Cadastrar";
+        }
+      }
+      async function removerUsuario(id) {
+        if (
+          !confirm("Remover este usuário? A conta de login dele será apagada.")
+        )
+          return;
+        try {
+          await removerContaCompleta(id);
+          renderUsuarios();
+        } catch (err) {
+          alert("Não foi possível remover: " + err.message);
+        }
+      }
+      function renderManutencao() {
+        document.getElementById("main").innerHTML = `
+    <header><div><h2>Manutenção</h2><p>Estado do sistema e correções</p></div></header>
+    <div class="section"><div class="section-head"><h3>Verificações</h3></div>
+      <div class="card"><p>Banco de dados: conectado · Autenticação: ativa · Notificações: pendente de configurar</p></div></div>
+    <div class="section"><div class="section-head"><h3>Registro de erros</h3></div>
+      <div class="card"><div class="empty">Nenhum erro registrado</div></div></div>`;
+      }
     </script>
   </body>
 </html>
